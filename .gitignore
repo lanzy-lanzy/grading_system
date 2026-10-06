@@ -1,0 +1,22 @@
+/.venv
+nul
+.env
+db.sqlite3
+__pycache__/
+*.pyc
+*.pyo
+node_modules/
+*.log
+.DS_Store
+Thumbs.db
+staticfiles/
+.vercel
+*.egg-info/
+dist/
+build/
+
+# Local artifacts / generated files (not part of the app source)
+.hypothesis/
+tmp/
+output/
+media/

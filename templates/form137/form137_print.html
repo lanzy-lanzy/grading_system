@@ -1,0 +1,516 @@
+{% load form137_filters %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SF 10-JHS - {{ student.last_name|upper }}, {{ student.first_name|upper }}</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background: #e5e7eb;
+            color: #000;
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 8.5pt;
+            line-height: 1.12;
+            padding: 18px;
+        }
+
+        .actions {
+            align-items: center;
+            display: flex;
+            gap: 8px;
+            position: fixed;
+            right: 18px;
+            top: 18px;
+            z-index: 10;
+        }
+
+        .btn {
+            align-items: center;
+            background: #1d4ed8;
+            border: 0;
+            border-radius: 6px;
+            color: #fff;
+            cursor: pointer;
+            display: inline-flex;
+            font: 600 13px Arial, Helvetica, sans-serif;
+            gap: 6px;
+            padding: 9px 14px;
+            text-decoration: none;
+        }
+
+        .btn-secondary {
+            background: #4b5563;
+        }
+
+        .print-status {
+            border-radius: 999px;
+            font: 600 11px Arial, Helvetica, sans-serif;
+            padding: 5px 12px;
+        }
+
+        .print-status.is-printed {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .print-status.is-unprinted {
+            background: #fef9c3;
+            color: #854d0e;
+        }
+
+        .page {
+            background: #fff;
+            box-shadow: 0 4px 22px rgba(0, 0, 0, 0.22);
+            margin: 0 auto;
+            min-height: 14in;
+            padding: 0.42in 0.52in 0.36in;
+            width: 8.5in;
+        }
+
+        .page-topline {
+            align-items: flex-end;
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 4px;
+            padding: 0 1px;
+        }
+
+        .sf-label,
+        .page-count {
+            font-size: 8pt;
+            font-weight: 500;
+        }
+
+        .fill-line {
+            border-bottom: 1px solid #000;
+            display: inline-block;
+            min-width: 76px;
+            transform: translateY(-1px);
+        }
+
+        .grade-block {
+            border: 2px solid #000;
+            margin-bottom: 6px;
+        }
+
+        .grade-block.compact {
+            margin-bottom: 5px;
+        }
+
+        table {
+            border-collapse: collapse;
+            table-layout: fixed;
+            width: 100%;
+        }
+
+        th,
+        td {
+            border: 1px solid #000;
+            padding: 1px 3px;
+            vertical-align: middle;
+        }
+
+        .block-meta {
+            border-bottom: 1px solid #000;
+            font-size: 7.8pt;
+            font-weight: 700;
+            padding: 2px 3px;
+            overflow: hidden;
+            white-space: normal;
+        }
+
+        .block-meta.line-2 {
+            border-top: 0;
+        }
+
+        .inline-value {
+            border-bottom: 1px solid #000;
+            display: inline-block;
+            min-width: 42px;
+            padding: 0 3px;
+        }
+
+        .inline-value.short {
+            min-width: 22px;
+        }
+
+        .inline-value.medium {
+            min-width: 58px;
+        }
+
+        .inline-value.long {
+            min-width: 92px;
+        }
+
+        .grades-table th {
+            font-size: 8.2pt;
+            font-weight: 800;
+            text-align: center;
+        }
+
+        .grades-table .learning {
+            width: 34.5%;
+        }
+
+        .grades-table .quarter {
+            width: 6.9%;
+        }
+
+        .grades-table .final {
+            width: 7%;
+        }
+
+        .grades-table .remarks {
+            width: 30.9%;
+        }
+
+        .grades-table td {
+            font-size: 7.8pt;
+            font-weight: 700;
+            height: 13px;
+            text-align: center;
+        }
+
+        .grades-table td.learning-area {
+            text-align: left;
+        }
+
+        .grades-table tr.mapeh-sub td.learning-area {
+            padding-left: 14px;
+        }
+
+        .grades-table tr.general-average td {
+            font-style: italic;
+            font-weight: 800;
+        }
+
+        .grades-table tr.general-average td.final-rating,
+        .grades-table tr.general-average td.remarks-cell {
+            font-style: normal;
+        }
+
+        .spacer-row td {
+            height: 12px;
+        }
+
+        .remedial-table th,
+        .remedial-table td {
+            font-size: 7.6pt;
+            font-weight: 700;
+            height: 13px;
+            text-align: center;
+        }
+
+        .remedial-table .remedial-title {
+            background: #f7f3e8;
+            width: 20.5%;
+        }
+
+        .remedial-table .conducted {
+            background: #f7f3e8;
+            text-align: left;
+        }
+
+        .transfer-note {
+            font-size: 8.2pt;
+            font-weight: 700;
+            margin: 4px 0 2px;
+        }
+
+        .certification {
+            border: 2px solid #000;
+            padding: 2px 4px 0;
+        }
+
+        .cert-title {
+            font-size: 10pt;
+            font-weight: 800;
+            margin-bottom: 12px;
+            text-align: center;
+        }
+
+        .cert-statement {
+            font-size: 8.1pt;
+            line-height: 1.25;
+            margin-bottom: 14px;
+        }
+
+        .cert-row {
+            align-items: flex-end;
+            display: grid;
+            gap: 14px;
+            grid-template-columns: 1fr 1.9fr 1.7fr;
+            margin-bottom: 1px;
+        }
+
+        .signature-field {
+            text-align: center;
+        }
+
+        .signature-line {
+            border-bottom: 1px solid #000;
+            font-size: 8pt;
+            font-weight: 800;
+            min-height: 14px;
+            padding-bottom: 1px;
+        }
+
+        .signature-label {
+            font-size: 7.5pt;
+        }
+
+        .seal-field {
+            align-self: end;
+            font-size: 8pt;
+            padding-bottom: 3px;
+            text-align: center;
+        }
+
+        .footer-note {
+            display: flex;
+            font-size: 8pt;
+            font-style: italic;
+            justify-content: space-between;
+            margin-top: 2px;
+        }
+
+        strong {
+            font-weight: 800;
+        }
+
+        @page {
+            size: 8.5in 14in;
+            margin: 0.35in 0.45in;
+        }
+
+        @media print {
+            body {
+                background: #fff;
+                padding: 0;
+            }
+
+            .actions {
+                display: none;
+            }
+
+            .page {
+                box-shadow: none;
+                margin: 0;
+                min-height: auto;
+                padding: 0;
+                width: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="actions">
+        <span id="print-status" class="print-status {% if record.is_printed %}is-printed{% else %}is-unprinted{% endif %}">
+            {% if record.is_printed %}Printed{% else %}Not printed{% endif %}
+        </span>
+        <a href="javascript:history.back()" class="btn btn-secondary">
+            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+            </svg>
+            Back
+        </a>
+        <button class="btn" onclick="window.print()">
+            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/>
+            </svg>
+            Print / Export PDF
+        </button>
+        <button type="button" id="mark-printed-btn" class="btn btn-secondary"{% if record.is_printed %} style="display:none"{% endif %}>
+            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+            </svg>
+            Mark as Printed
+        </button>
+    </div>
+
+    <script>
+        (function () {
+            const markUrl = "{% url 'form137:form137_mark_printed' record.pk %}";
+            const csrfToken = "{{ csrf_token }}";
+            let isPrinted = {% if record.is_printed %}true{% else %}false{% endif %};
+            const statusEl = document.getElementById('print-status');
+            const markBtn = document.getElementById('mark-printed-btn');
+
+            function renderStatus() {
+                statusEl.textContent = isPrinted ? 'Printed' : 'Not printed';
+                statusEl.className = 'print-status ' + (isPrinted ? 'is-printed' : 'is-unprinted');
+                markBtn.style.display = isPrinted ? 'none' : '';
+            }
+
+            function markPrinted() {
+                if (isPrinted) return;
+                isPrinted = true;
+                renderStatus();
+                fetch(markUrl, {
+                    method: 'POST',
+                    headers: { 'X-CSRFToken': csrfToken },
+                    keepalive: true
+                });
+            }
+
+            // Auto-close the issuance loop: any actual print (dialog or Ctrl+P)
+            // marks the record, plus a manual fallback button.
+            window.addEventListener('beforeprint', markPrinted);
+            markBtn.addEventListener('click', markPrinted);
+        })();
+    </script>
+
+    <main class="page">
+        <div class="page-topline">
+            <div class="sf-label">SF 10-JHS</div>
+            <div class="page-count">Pag 2 of <span class="fill-line"></span></div>
+        </div>
+
+        {% for block in print_blocks %}
+        <section class="grade-block{% if forloop.counter > 1 %} compact{% endif %}">
+            <div class="block-meta">
+                School:
+                <strong>{% if block.is_blank %}<span class="inline-value long">&nbsp;</span>{% else %}PAQUITO S. YU MEMORIAL NHS{% endif %}</strong>
+                &nbsp; School ID:
+                <strong>{% if block.is_blank %}<span class="inline-value">&nbsp;</span>{% else %}314235{% endif %}</strong>
+                &nbsp; District:
+                <strong>{% if block.is_blank %}<span class="inline-value medium">&nbsp;</span>{% else %}DUMINGAG-1{% endif %}</strong>
+                &nbsp; Division:
+                <strong>{% if block.is_blank %}<span class="inline-value long">&nbsp;</span>{% else %}ZAMBOANGA DEL SUR{% endif %}</strong>
+                &nbsp; Region:
+                <strong>{% if block.is_blank %}<span class="inline-value short">&nbsp;</span>{% else %}IX{% endif %}</strong>
+            </div>
+
+            <div class="block-meta line-2">
+                Classified as Grade:
+                <strong>{% if block.grade_level %}{{ block.grade_level.level }}{% else %}<span class="inline-value short">&nbsp;</span>{% endif %}</strong>
+                &nbsp; Section:
+                <strong>{% if block.section_name %}{{ block.section_name }}{% else %}<span class="inline-value short">&nbsp;</span>{% endif %}</strong>
+                &nbsp; School Year:
+                <strong>{% if block.school_year %}{{ block.school_year.name }}{% else %}<span class="inline-value medium">&nbsp;</span>{% endif %}</strong>
+                &nbsp; Name of Adviser/Teacher:
+                <strong>{% if block.adviser_name %}{{ block.adviser_name }}{% else %}<span class="inline-value long">&nbsp;</span>{% endif %}</strong>
+                &nbsp; Signature:
+                <span class="inline-value medium">&nbsp;</span>
+            </div>
+
+            <table class="grades-table">
+                <thead>
+                    <tr>
+                        <th rowspan="2" class="learning">LEARNING AREAS</th>
+                        <th colspan="4">QUARTER{% if block.is_blank %}LY RATING{% endif %}</th>
+                        <th rowspan="2" class="final">FINAL<br>RATING</th>
+                        <th rowspan="2" class="remarks">REMARKS</th>
+                    </tr>
+                    <tr>
+                        <th class="quarter">1</th>
+                        <th class="quarter">2</th>
+                        <th class="quarter">3</th>
+                        <th class="quarter">4</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in block.subject_rows %}
+                    <tr{% if row.is_mapeh_sub %} class="mapeh-sub"{% endif %}>
+                        <td class="learning-area">{{ row.display_name|default:row.subject_name }}</td>
+                        <td>{% if row.q1 is not None %}{{ row.q1|floatformat:0 }}{% endif %}</td>
+                        <td>{% if row.q2 is not None %}{{ row.q2|floatformat:0 }}{% endif %}</td>
+                        <td>{% if row.q3 is not None %}{{ row.q3|floatformat:0 }}{% endif %}</td>
+                        <td>{% if row.q4 is not None %}{{ row.q4|floatformat:0 }}{% endif %}</td>
+                        <td class="final-rating">{% if row.final_grade is not None %}{{ row.final_grade|floatformat:0 }}{% endif %}</td>
+                        <td class="remarks-cell">{{ row.remarks }}</td>
+                    </tr>
+                    {% endfor %}
+                    <tr class="spacer-row">
+                        <td>&nbsp;</td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                    </tr>
+                    <tr class="general-average">
+                        <td></td>
+                        <td colspan="4">General Average</td>
+                        <td class="final-rating">{% if block.general_average is not None %}{{ block.general_average|floatformat:0 }}{% endif %}</td>
+                        <td class="remarks-cell">{% if block.general_average is not None %}{% if block.general_average >= 75 %}PROMOTED{% else %}RETAINED{% endif %}{% endif %}</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <table class="remedial-table">
+                <tr>
+                    <th class="remedial-title">Remedial Classes</th>
+                    <th colspan="4" class="conducted">
+                        Conducted from (mm/dd/yyyy) ____________________ to (mm/dd/yyyy) _______________
+                    </th>
+                </tr>
+                <tr>
+                    <th>{% if forloop.first %}Subject{% else %}Learning Areas{% endif %}</th>
+                    <th style="width: 13.5%;">Final Rating</th>
+                    <th style="width: 20.5%;">Remedial Class Mark</th>
+                    <th style="width: 13.8%;">Recomputed Final</th>
+                    <th>Remarks</th>
+                </tr>
+                <tr>
+                    <td>&nbsp;</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                </tr>
+                <tr>
+                    <td>&nbsp;</td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                    <td></td>
+                </tr>
+            </table>
+        </section>
+        {% endfor %}
+
+        <div class="transfer-note">For Transfer Out /JHS Completer Only</div>
+
+        <section class="certification">
+            <div class="cert-title">CERTIFICATION</div>
+            <p class="cert-statement">
+                I CERTIFY that this is a true record of
+                <strong>{{ student.last_name|upper }}, {{ student.first_name|upper }}{% if student.middle_name %} {{ student.middle_name|upper }}{% endif %}{% if student.suffix %} {{ student.suffix|upper }}{% endif %}</strong>
+                with LRN <strong>{{ student.lrn }}</strong>
+                and that he/she is&nbsp; eligible for admission to Grade
+                <strong>{% with last_block=grade_blocks|last %}{{ last_block.grade_level.level|next_grade }}{% endwith %}</strong> .
+                <br>
+                Name of School: <strong>PAQUITO S. YU MEMORIAL NHS</strong>
+                &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; School ID: <strong>314235</strong>
+                &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Last School Year Attended:
+                <strong>{% with last_block=grade_blocks|last %}{{ last_block.school_year.name }}{% endwith %}.</strong>
+            </p>
+            <div class="cert-row">
+                <div class="signature-field">
+                    <div class="signature-line">&nbsp;</div>
+                    <div class="signature-label">Date</div>
+                </div>
+                <div class="signature-field">
+                    <div class="signature-line">EUGENE A. BATILONG</div>
+                    <div class="signature-label">Name of Principal/School Head over Printed Name</div>
+                </div>
+                <div class="seal-field">(Affix School Seal here)</div>
+            </div>
+        </section>
+
+        <div class="footer-note">
+            <span>(May add Certification box if needed)</span>
+            <span>SFRT Revised 2017</span>
+        </div>
+    </main>
+</body>
+</html>
