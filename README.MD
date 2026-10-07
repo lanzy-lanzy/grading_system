@@ -186,9 +186,12 @@ uv run python manage.py seed_data --fresh   # hard reset: deletes ALL users (inc
   - ~20% of classes use alternative weights (30/40/30 or 25/50/25); quarter grades
     are computed with the model's `weighted_quarter_grade()` so PS/WS/term-grade
     values are always internally consistent.
-  - Current-year workflow statuses by quarter: Q1 validated, Q2 mixed validated/submitted,
-    Q3 mixed draft/submitted/validated, Q4 mostly drafts.
-  - Active Grade 8–12 students also get a full validated `2024-2025` year for Form 137 history.
+  - Current-year (2025-2026) grades: **Quarter 1 and Quarter 2**, both `validated`. The
+    Q3–Q4 grading periods still exist but have no grade records yet, so the current
+    year reads as part-way through (Form 137 shows the Q1–Q2 ratings but stays
+    "Incomplete" with a blank final until Q3–Q4 are encoded).
+  - Active Grade 8–12 students also get a full validated `2024-2025` year (all four
+    quarters) for Form 137 history.
 - **Submissions & validations:** `GradeSubmission` (pending/approved) and `GradeValidation`
   records mirroring the submitted/validated workflow states.
 - **Form 137 records:** Generated for every active student with validated current-year grades.

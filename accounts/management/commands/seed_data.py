@@ -378,7 +378,7 @@ class Command(BaseCommand):
         return students
 
     def _create_grades_and_submissions(self, students, assignments, grading_periods, school_years, sections, users):
-        """Create grades for all quarters with realistic workflow statuses."""
+        """Seed Quarter 1-2 grades for the current school year; prior year keeps full validated history."""
         teachers = users['teachers']
         registrar = users['registrar']
         current_sy = school_years['2025-2026']
@@ -389,7 +389,10 @@ class Command(BaseCommand):
             key = (a.section_id, a.subject_id)
             assignment_map[key] = a
 
-        # For current school year, create grades for all quarters
+        # For the current school year, seed Quarter 1 and Quarter 2 grades
+        # (both validated). Q3-Q4 grading periods still exist (see
+        # _create_grading_periods) but have no grade records yet, reflecting a
+        # school year that is part-way through.
         for student in students:
             if student.status != 'active':
                 continue
@@ -404,22 +407,11 @@ class Command(BaseCommand):
 
                 teacher = assignment.teacher
 
-                for order in range(1, 5):
+                for order in [1, 2]:
                     gp = grading_periods['2025-2026'][order]
 
-                    # Determine grade workflow status based on quarter
-                    if order == 1:
-                        # Q1: fully validated (closed workflow)
-                        status = 'validated'
-                    elif order == 2:
-                        # Q2: mix of pending submissions and validated
-                        status = random.choice(['validated', 'submitted'])
-                    elif order == 3:
-                        # Q3: some drafts, some submitted
-                        status = random.choice(['draft', 'submitted', 'validated'])
-                    else:
-                        # Q4: mostly drafts
-                        status = random.choice(['draft', 'draft', 'submitted'])
+                    # Q1 & Q2: fully validated (closed workflow)
+                    status = 'validated'
 
                     # Generate realistic component scores. Each category is the
                     # sum of its items; maxima are class-wide highest possible

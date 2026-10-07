@@ -3,6 +3,7 @@ from django.contrib import messages
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.http import require_POST
 from django.core.paginator import Paginator
+from django.db import transaction
 from django.db.models import Q, Count
 from django.utils import timezone
 from datetime import timedelta
@@ -89,7 +90,24 @@ def form137_generate(request, student_pk, sy_pk):
         messages.warning(request, 'No validated grades found for this student.')
         return redirect('form137:form137_list')
 
-    grade_level = grade_blocks[0]["grade_level"]
+    # The record must reflect the grade level for the SELECTED school year.
+    # build_grade_blocks sorts blocks ascending across ALL years, so taking
+    # grade_blocks[0] would wrongly attach the student's earliest grade level
+    # to the chosen year and create a mismatched (school_year, grade_level)
+    # row that never reconciles with the correct one. Pick the block that
+    # actually belongs to this school year; if the student has no validated
+    # grades for it, there is nothing to generate.
+    block_for_year = next(
+        (b for b in grade_blocks if b['school_year'] == school_year), None
+    )
+    if block_for_year is None:
+        messages.warning(
+            request,
+            f'No validated grades found for {student.full_name} in {school_year.name}.'
+        )
+        return redirect('form137:form137_list')
+
+    grade_level = block_for_year['grade_level']
 
     record, created = Form137Record.objects.get_or_create(
         student=student,
@@ -152,38 +170,70 @@ def form137_mark_printed(request, record_pk):
 
 
 @role_required('admin', 'registrar')
+@transaction.atomic
 def form137_bulk_generate(request):
     if request.method == 'POST':
         sy_pk = request.POST.get('school_year')
+        if not sy_pk:
+            messages.error(request, 'Please select a school year to generate.')
+            return redirect('form137:form137_bulk_generate')
         school_year = get_object_or_404(SchoolYear, pk=sy_pk)
-        
+
         students_with_grades = Student.objects.filter(
             grades__school_year=school_year,
             grades__status__in=['validated', 'locked']
-        ).distinct()
-        
-        count = 0
+        ).distinct().select_related('grade_level')
+
+        created_count = 0
+        existing_count = 0
+        reconciled_count = 0
+
         for student in students_with_grades:
-            grades = Grade.objects.filter(
+            # Determine the grade level from the student's validated grades for
+            # THIS school year (deterministic ordering), falling back to the
+            # enrolled grade level. Deriving it from an unscoped or arbitrarily
+            # ordered grade caused mismatched (school_year, grade_level) rows.
+            validated = Grade.objects.filter(
                 student=student,
                 school_year=school_year,
-                status__in=['validated', 'locked']
-            ).select_related('subject')
-            
-            if grades.exists():
-                grade_level = grades.first().subject.grade_level
-                record, created = Form137Record.objects.get_or_create(
-                    student=student,
-                    school_year=school_year,
-                    grade_level=grade_level,
-                    defaults={'generated_by': request.user}
-                )
-                if created:
-                    count += 1
-        
-        messages.success(request, f'{count} Form 137 records generated successfully.')
+                status__in=['validated', 'locked'],
+            ).select_related('subject__grade_level').order_by('subject__grade_level__level')
+
+            first_grade = validated.first()
+            grade_level = first_grade.subject.grade_level if first_grade else student.grade_level
+            if grade_level is None:
+                continue
+
+            record, created = Form137Record.objects.get_or_create(
+                student=student,
+                school_year=school_year,
+                grade_level=grade_level,
+                defaults={'generated_by': request.user}
+            )
+            if created:
+                created_count += 1
+            else:
+                existing_count += 1
+
+            # Reconcile stale rows left by the previous bug: any unprinted
+            # record for this student/year whose grade level no longer matches
+            # the validated grades would otherwise sit in the list forever as
+            # a "Pending" entry that can never be generated or matched.
+            stale = Form137Record.objects.filter(
+                student=student,
+                school_year=school_year,
+                is_printed=False,
+            ).exclude(grade_level=grade_level)
+            reconciled_count += stale.delete()[0]
+
+        messages.success(
+            request,
+            f'Bulk generate for {school_year.name}: {created_count} created, '
+            f'{existing_count} already existed'
+            + (f', {reconciled_count} stale pending row(s) cleared.' if reconciled_count else '.')
+        )
         return redirect('form137:form137_list')
-    
+
     school_years = SchoolYear.objects.all()
     return render(request, 'form137/bulk_generate.html', {
         'school_years': school_years

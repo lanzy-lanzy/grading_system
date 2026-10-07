@@ -9,6 +9,7 @@ independently of the HTTP request/response cycle.
 
 from decimal import Decimal
 
+from academics.models import GradingPeriod
 from grades.models import Grade
 
 
@@ -98,7 +99,9 @@ def compute_general_average(subject_rows: list) -> Decimal:
     If only sub-rows exist and no MAPEH parent final is available, sub-rows
     are included in the average.
 
-    Returns Decimal("0") when no finals are available.
+    Returns None when no finals are available (e.g. an in-progress school year
+    where no subject has all quarters graded yet), so the template can render
+    a blank General Average instead of a misleading 0.
 
     Requirements: 6.1, 6.2, 6.3
     """
@@ -118,7 +121,7 @@ def compute_general_average(subject_rows: list) -> Decimal:
         finals.append(row["final_grade"])
 
     if not finals:
-        return Decimal("0")
+        return None
 
     return sum(finals) / len(finals)
 
@@ -295,6 +298,18 @@ def build_grade_blocks(student) -> list:
             raw_blocks[key]["section"] = grade.section
 
     # ------------------------------------------------------------------
+    # 2b. Grading periods (quarters) defined for each school year. A subject
+    #     is only "complete" for a year once it has validated grades for all
+    #     of these orders; used below to gate the Passed/Failed remark.
+    # ------------------------------------------------------------------
+    school_year_ids = {rb["school_year"].id for rb in raw_blocks.values()}
+    expected_orders_by_sy: dict = {}
+    for sy_id, order in GradingPeriod.objects.filter(
+        school_year_id__in=school_year_ids
+    ).values_list("school_year_id", "order"):
+        expected_orders_by_sy.setdefault(sy_id, set()).add(order)
+
+    # ------------------------------------------------------------------
     # 3. Sort blocks by grade_level.level ascending.
     # ------------------------------------------------------------------
     sorted_keys = sorted(
@@ -343,6 +358,7 @@ def build_grade_blocks(student) -> list:
         present_mapeh_subs = [n for n in MAPEH_SUBS if n in present_subjects]
 
         subject_rows = []
+        expected_orders = expected_orders_by_sy.get(school_year.id, set())
 
         def _build_row(subject_name: str, is_mapeh: bool, is_mapeh_sub: bool) -> dict:
             """Build a single subject-row dict from the grade lookup."""
@@ -371,16 +387,24 @@ def build_grade_blocks(student) -> list:
             # Grade model stores a running final_grade per grading period.
             # If there are multiple periods, we prefer the one with the
             # highest order (most recent).
-            if period_map:
-                max_order = max(period_map.keys())
-                final_grade = period_map[max_order].final_grade
-                # Treat 0 as "no grade" when the grade record exists but is empty.
-                # (The model defaults final_grade to 0.)
-                # We only treat it as None if there are literally no records.
-            else:
+            # A subject only earns a Passed/Failed remark once it has validated
+            # grades for EVERY quarter (grading period) defined for the school
+            # year. If any quarter is still missing, the year-end final rating
+            # cannot be certified yet — show "Incomplete" with a blank final
+            # instead of falsely promoting a provisional quarter grade.
+            if not period_map:
                 final_grade = None
-
-            remarks = compute_remarks(final_grade)
+                remarks = ""
+            else:
+                graded_orders = set(period_map.keys())
+                is_complete = (not expected_orders) or graded_orders >= expected_orders
+                if is_complete:
+                    max_order = max(period_map.keys())
+                    final_grade = period_map[max_order].final_grade
+                    remarks = compute_remarks(final_grade)
+                else:
+                    final_grade = None
+                    remarks = "Incomplete"
 
             return {
                 "subject_name": subject_name,
