@@ -1,5 +1,6 @@
 from decimal import Decimal, ROUND_HALF_UP
 
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.conf import settings
 
@@ -75,6 +76,14 @@ class Grade(models.Model):
         ('locked', 'Locked'),
     )
 
+    # Raw per-item score fields that must always be whole numbers (integers).
+    ITEM_SCORE_FIELDS = (
+        'written_work_1', 'written_work_2', 'written_work_3',
+        'written_work_4', 'written_work_5',
+        'performance_task_1', 'performance_task_2', 'performance_task_3',
+        'assessment_1', 'assessment_2', 'assessment_3',
+    )
+
     student = models.ForeignKey('students.Student', on_delete=models.CASCADE, related_name='grades')
     subject = models.ForeignKey('academics.Subject', on_delete=models.CASCADE, related_name='grades')
     grading_period = models.ForeignKey('academics.GradingPeriod', on_delete=models.CASCADE, related_name='grades')
@@ -84,11 +93,12 @@ class Grade(models.Model):
     # Written Work (20%): five component scores summed into written_work (total).
     # Each item also has a class-wide "highest possible score"; the category max
     # (written_work_highest) is the sum of the item maxima and drives the PS.
-    written_work_1 = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
-    written_work_2 = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
-    written_work_3 = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
-    written_work_4 = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
-    written_work_5 = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
+    # Raw item scores are whole numbers only (integers); no decimal input.
+    written_work_1 = models.IntegerField(null=True, blank=True)
+    written_work_2 = models.IntegerField(null=True, blank=True)
+    written_work_3 = models.IntegerField(null=True, blank=True)
+    written_work_4 = models.IntegerField(null=True, blank=True)
+    written_work_5 = models.IntegerField(null=True, blank=True)
     written_work_1_highest = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     written_work_2_highest = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     written_work_3_highest = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
@@ -97,18 +107,18 @@ class Grade(models.Model):
     written_work = models.DecimalField(max_digits=6, decimal_places=2, default=0)
     written_work_highest = models.DecimalField(max_digits=6, decimal_places=2, default=100)
     # Performance Tasks (50%): three component scores summed into performance_task.
-    performance_task_1 = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
-    performance_task_2 = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
-    performance_task_3 = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
+    performance_task_1 = models.IntegerField(null=True, blank=True)
+    performance_task_2 = models.IntegerField(null=True, blank=True)
+    performance_task_3 = models.IntegerField(null=True, blank=True)
     performance_task_1_highest = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     performance_task_2_highest = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     performance_task_3_highest = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     performance_task = models.DecimalField(max_digits=6, decimal_places=2, default=0)
     performance_task_highest = models.DecimalField(max_digits=6, decimal_places=2, default=100)
     # Quarterly Assessment (30%): three component scores summed into assessment.
-    assessment_1 = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
-    assessment_2 = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
-    assessment_3 = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
+    assessment_1 = models.IntegerField(null=True, blank=True)
+    assessment_2 = models.IntegerField(null=True, blank=True)
+    assessment_3 = models.IntegerField(null=True, blank=True)
     assessment_1_highest = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     assessment_2_highest = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
     assessment_3_highest = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True)
@@ -190,6 +200,30 @@ class Grade(models.Model):
             self.remarks = 'Incomplete'
         else:
             self.remarks = 'Failed'
+
+    def clean(self):
+        """Validate that every raw item score is a whole number.
+
+        Individual student scores (Written Work 1-5, Performance Task 1-3,
+        Quarterly Assessment 1-3) must be integers — no decimal values. The
+        component totals and weighted grades may still carry decimals.
+        """
+        errors = {}
+        for name in self.ITEM_SCORE_FIELDS:
+            value = getattr(self, name)
+            if value is None or value == '':
+                continue
+            try:
+                as_decimal = Decimal(str(value))
+            except (TypeError, ValueError):
+                errors[name] = 'Item score must be a whole number.'
+                continue
+            if as_decimal != as_decimal.to_integral_value():
+                errors[name] = 'Item score must be a whole number (no decimals).'
+            elif as_decimal < 0:
+                errors[name] = 'Item score cannot be negative.'
+        if errors:
+            raise ValidationError(errors)
 
 
 class GradeSubmission(models.Model):

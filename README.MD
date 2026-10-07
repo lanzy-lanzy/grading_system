@@ -103,8 +103,12 @@ uv run python manage.py createsuperuser
 ### 10. Seed sample data
 
 ```bash
-uv run python manage.py seed_data
+uv run python manage.py seed_data            # seed (idempotent, keeps existing data)
+uv run python manage.py seed_data --reset    # clear sample data & re-seed (keeps admins)
+uv run python manage.py seed_data --fresh    # wipe ALL users & data, re-seed from scratch
 ```
+
+See [Seed Data](#seed-data) below for what gets created and the login credentials.
 
 ### 11. Run development server
 
@@ -122,7 +126,81 @@ Visit: http://127.0.0.1:8000
 |-----------|-----------|-------------|
 | Admin     | admin     | admin123    |
 | Registrar | registrar | registrar123|
-| Teacher   | teacher1  | teacher123  |
+| Teacher   | reyes     | teacher123  |
+| Student   | student1  | student123  |
+
+Full account list in [Seed Data](#seed-data).
+
+---
+
+## Seed Data
+
+The `seed_data` management command (`accounts/management/commands/seed_data.py`) populates the
+entire database with realistic sample data covering every role and workflow.
+
+### Commands
+
+```bash
+uv run python manage.py seed_data           # safe re-run: upserts, never duplicates
+uv run python manage.py seed_data --reset   # deletes sample data + non-admin users, then re-seeds
+uv run python manage.py seed_data --fresh   # hard reset: deletes ALL users (incl. admins) and data
+```
+
+> ⚠️ `--reset` and `--fresh` are irreversible. `--fresh` also destroys manually created
+> accounts — export anything important first. The whole seed runs in a single transaction,
+> so a failure mid-way rolls back automatically.
+
+### Seeded Accounts
+
+| Role | Username | Password | Notes |
+|------|----------|----------|-------|
+| Admin | `admin` | `admin123` | Superuser / system administrator |
+| Registrar | `registrar` | `registrar123` | Maria Santos — validates grades, issues Form 137 |
+| Teacher | `reyes` | `teacher123` | Ana Reyes |
+| Teacher | `lopez` | `teacher123` | Carmen Lopez |
+| Teacher | `gonzaga` | `teacher123` | Jose Gonzaga |
+| Teacher | `mendoza` | `teacher123` | Elena Mendoza |
+| Teacher | `delacruz` | `teacher123` | Antonio Delacruz |
+| Teacher | `bautista` | `teacher123` | Sophia Bautista |
+| Student | `student1` – `student5` | `student123` | Linked to the first 5 Student records |
+
+### What Gets Created
+
+- **School years:** `2024-2025` (past) and `2025-2026` (current).
+- **Grade levels:** Grade 7–12, each with 8 JHS core subjects (Filipino, English,
+  Mathematics, Science, AP, EsP, MAPEH, TLE) — 48 subjects total.
+- **Sections:** A/B/C per grade level per school year, with randomly assigned advisers.
+- **Grading periods:** Quarter 1–4 per school year with month coverage
+  (Q1 Aug–Oct, Q2 Nov–Jan, Q3 Feb–Apr, Q4 May–Jul). Only current-year Q1 is
+  `is_current` and open for grade submissions.
+- **Teacher assignments:** ~96 — each teacher covers 2 of 3 sections per subject.
+- **Students:** ~85–90 across Grade 7–12 sections with 12-digit LRNs, mixed statuses
+  (active / inactive / transferred / dropped); the first 5 are linked to student logins.
+- **Grades:** Full component structure per DepEd class record:
+  - Written Work: 5 item scores + per-item highest possible scores (WW weight 20%)
+  - Performance Tasks: 3 item scores + maxima (PT weight 50%)
+  - Quarterly Assessment: 3 item scores + maxima (QA weight 30%)
+  - Raw item scores (WW 1-5, PT 1-3, QA 1-3) are stored as **whole numbers only**
+    (`IntegerField`); the model's `clean()` rejects decimal input. Component totals
+    and the weighted quarter grade may still carry decimals.
+  - ~20% of classes use alternative weights (30/40/30 or 25/50/25); quarter grades
+    are computed with the model's `weighted_quarter_grade()` so PS/WS/term-grade
+    values are always internally consistent.
+  - Current-year workflow statuses by quarter: Q1 validated, Q2 mixed validated/submitted,
+    Q3 mixed draft/submitted/validated, Q4 mostly drafts.
+  - Active Grade 8–12 students also get a full validated `2024-2025` year for Form 137 history.
+- **Submissions & validations:** `GradeSubmission` (pending/approved) and `GradeValidation`
+  records mirroring the submitted/validated workflow states.
+- **Form 137 records:** Generated for every active student with validated current-year grades.
+- **Audit log:** 8 sample entries covering login, grade encode/submit/validate/return,
+  and Form 137 generation actions.
+
+### Typical Counts After `--reset`
+
+```
+users 13 | students 89 | grades 2816 | submissions 348 | validations 62 |
+form137 40 | audit 8 | periods 8 | assignments 96
+```
 
 ---
 

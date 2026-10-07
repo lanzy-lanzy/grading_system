@@ -1,5 +1,5 @@
 import random
-from datetime import date, timedelta
+from datetime import date
 from decimal import Decimal
 
 from django.core.management.base import BaseCommand
@@ -8,7 +8,7 @@ from django.db import transaction
 from accounts.models import User, AuditLog
 from academics.models import SchoolYear, GradeLevel, Section, Subject, TeacherAssignment, GradingPeriod
 from students.models import Student
-from grades.models import Grade, GradeSubmission, GradeValidation
+from grades.models import Grade, GradeSubmission, GradeValidation, weighted_quarter_grade
 from form137.models import Form137Record
 
 
@@ -21,14 +21,24 @@ class Command(BaseCommand):
             action='store_true',
             help='Delete existing non-admin users and sample data before seeding.',
         )
+        parser.add_argument(
+            '--fresh',
+            action='store_true',
+            help='Hard reset: delete ALL users (including admins) and every seeded '
+                 'record, then re-seed from scratch. Existing passwords are destroyed.',
+        )
 
     @transaction.atomic
     def handle(self, *args, **options):
         reset = options.get('reset', False)
+        fresh = options.get('fresh', False)
 
-        if reset:
+        if fresh:
+            self.stdout.write(self.style.WARNING('Hard reset: wiping ALL users and data...'))
+            self._reset_sample_data(keep_admins=False)
+        elif reset:
             self.stdout.write(self.style.WARNING('Resetting sample data...'))
-            self._reset_sample_data()
+            self._reset_sample_data(keep_admins=True)
 
         self.stdout.write(self.style.NOTICE('Seeding users...'))
         users = self._create_users()
@@ -52,14 +62,18 @@ class Command(BaseCommand):
         self.stdout.write(self.style.NOTICE('Seeding Form 137 records...'))
         self._create_form137_records(students, school_years, users['admin'])
 
+        self.stdout.write(self.style.NOTICE('Seeding audit log samples...'))
+        self._create_audit_logs(users)
+
         self.stdout.write(self.style.SUCCESS('Database seeded successfully.'))
 
-    def _reset_sample_data(self):
-        """Clear data that will be re-seeded. Keep any manually created admin accounts."""
+    def _reset_sample_data(self, keep_admins=True):
+        """Clear data that will be re-seeded. Optionally keep admin/superuser accounts."""
         GradeValidation.objects.all().delete()
         GradeSubmission.objects.all().delete()
         Grade.objects.all().delete()
         Form137Record.objects.all().delete()
+        AuditLog.objects.all().delete()
         TeacherAssignment.objects.all().delete()
         GradingPeriod.objects.all().delete()
         Section.objects.all().delete()
@@ -68,8 +82,11 @@ class Command(BaseCommand):
         SchoolYear.objects.all().delete()
         Student.objects.all().delete()
 
-        # Delete seeded sample users but preserve existing admins/superusers
-        User.objects.filter(is_superuser=False, is_staff=False).delete()
+        if keep_admins:
+            # Delete seeded sample users but preserve existing admins/superusers
+            User.objects.filter(is_superuser=False, is_staff=False).delete()
+        else:
+            User.objects.all().delete()
 
     def _create_users(self):
         """Create sample users for every role."""
@@ -243,19 +260,24 @@ class Command(BaseCommand):
         return subjects
 
     def _create_grading_periods(self, school_years):
-        """Create Q1-Q4 grading periods for each school year."""
+        """Create Q1-Q4 grading periods for each school year with month coverage."""
         periods = {}
         period_names = {1: 'Quarter 1', 2: 'Quarter 2', 3: 'Quarter 3', 4: 'Quarter 4'}
+        # Typical Philippine school-year quarter month ranges (August start).
+        month_ranges = {1: (8, 10), 2: (11, 1), 3: (2, 4), 4: (5, 7)}
 
         for sy_name, sy in school_years.items():
             periods[sy_name] = {}
             for order in range(1, 5):
                 is_current = (sy_name == '2025-2026' and order == 1)
+                start_month, end_month = month_ranges[order]
                 gp, _ = GradingPeriod.objects.get_or_create(
                     order=order,
                     school_year=sy,
                     defaults={
                         'name': period_names[order],
+                        'start_month': start_month,
+                        'end_month': end_month,
                         'is_current': is_current,
                         'is_submissions_open': is_current,
                     }
@@ -263,6 +285,9 @@ class Command(BaseCommand):
                 # Ensure current year Q1 is open, others closed by default
                 gp.is_current = is_current
                 gp.is_submissions_open = is_current
+                if not gp.start_month:
+                    gp.start_month = start_month
+                    gp.end_month = end_month
                 gp.save()
                 periods[sy_name][order] = gp
 
@@ -396,11 +421,32 @@ class Command(BaseCommand):
                         # Q4: mostly drafts
                         status = random.choice(['draft', 'draft', 'submitted'])
 
-                    # Generate realistic grades
-                    written = random.randint(70, 95)
-                    performance = random.randint(70, 95)
-                    assessment = random.randint(70, 95)
-                    quarter_grade = Decimal((written + performance + assessment) / 3).quantize(Decimal('0.01'))
+                    # Generate realistic component scores. Each category is the
+                    # sum of its items; maxima are class-wide highest possible
+                    # scores shared across students in the same section/subject
+                    # quarter (simplified here as fixed per-category maxima).
+                    ww_items, ww_max = self._random_components(5, 10, 20)
+                    pt_items, pt_max = self._random_components(3, 20, 35)
+                    as_items, as_max = self._random_components(3, 15, 30)
+
+                    written = sum(ww_items)
+                    performance = sum(pt_items)
+                    assessment = sum(as_items)
+
+                    # A few classes use non-default category weights (must sum
+                    # to 100); most keep the DepEd default WW 20 / PT 50 / QA 30.
+                    ww_w, pt_w, as_w = (Decimal('20'), Decimal('50'), Decimal('30'))
+                    if random.random() < 0.2:
+                        ww_w, pt_w, as_w = random.choice([
+                            (Decimal('30'), Decimal('40'), Decimal('30')),
+                            (Decimal('25'), Decimal('50'), Decimal('25')),
+                        ])
+                    quarter_grade = weighted_quarter_grade(
+                        written, ww_max * 5,
+                        performance, pt_max * 3,
+                        assessment, as_max * 3,
+                        ww_w, pt_w, as_w,
+                    ).quantize(Decimal('0.01'))
                     remarks = 'Passed' if quarter_grade >= 75 else ('Incomplete' if quarter_grade >= 60 else 'Failed')
 
                     grade, _ = Grade.objects.update_or_create(
@@ -410,9 +456,37 @@ class Command(BaseCommand):
                         school_year=current_sy,
                         defaults={
                             'section': section,
+                            'written_work_1': ww_items[0],
+                            'written_work_2': ww_items[1],
+                            'written_work_3': ww_items[2],
+                            'written_work_4': ww_items[3],
+                            'written_work_5': ww_items[4],
+                            'written_work_1_highest': ww_max,
+                            'written_work_2_highest': ww_max,
+                            'written_work_3_highest': ww_max,
+                            'written_work_4_highest': ww_max,
+                            'written_work_5_highest': ww_max,
                             'written_work': written,
+                            'written_work_highest': ww_max * 5,
+                            'performance_task_1': pt_items[0],
+                            'performance_task_2': pt_items[1],
+                            'performance_task_3': pt_items[2],
+                            'performance_task_1_highest': pt_max,
+                            'performance_task_2_highest': pt_max,
+                            'performance_task_3_highest': pt_max,
                             'performance_task': performance,
+                            'performance_task_highest': pt_max * 3,
+                            'assessment_1': as_items[0],
+                            'assessment_2': as_items[1],
+                            'assessment_3': as_items[2],
+                            'assessment_1_highest': as_max,
+                            'assessment_2_highest': as_max,
+                            'assessment_3_highest': as_max,
                             'assessment': assessment,
+                            'assessment_highest': as_max * 3,
+                            'written_work_weight': ww_w,
+                            'performance_task_weight': pt_w,
+                            'assessment_weight': as_w,
                             'quarter_grade': quarter_grade,
                             'final_grade': quarter_grade,
                             'remarks': remarks,
@@ -467,7 +541,17 @@ class Command(BaseCommand):
             for subject in self._get_subjects_for_level(prev_level):
                 for order in range(1, 5):
                     gp = grading_periods['2024-2025'][order]
-                    quarter_grade = Decimal(random.randint(75, 92))
+                    ww_items, ww_max = self._random_components(5, 10, 20)
+                    pt_items, pt_max = self._random_components(3, 20, 35)
+                    as_items, as_max = self._random_components(3, 15, 30)
+                    written = sum(ww_items)
+                    performance = sum(pt_items)
+                    assessment = sum(as_items)
+                    quarter_grade = weighted_quarter_grade(
+                        written, ww_max * 5,
+                        performance, pt_max * 3,
+                        assessment, as_max * 3,
+                    ).quantize(Decimal('0.01'))
                     Grade.objects.get_or_create(
                         student=student,
                         subject=subject,
@@ -475,17 +559,56 @@ class Command(BaseCommand):
                         school_year=prev_sy,
                         defaults={
                             'section': prev_section,
-                            'written_work': random.randint(75, 92),
-                            'performance_task': random.randint(75, 92),
-                            'assessment': random.randint(75, 92),
+                            'written_work_1': ww_items[0],
+                            'written_work_2': ww_items[1],
+                            'written_work_3': ww_items[2],
+                            'written_work_4': ww_items[3],
+                            'written_work_5': ww_items[4],
+                            'written_work_1_highest': ww_max,
+                            'written_work_2_highest': ww_max,
+                            'written_work_3_highest': ww_max,
+                            'written_work_4_highest': ww_max,
+                            'written_work_5_highest': ww_max,
+                            'written_work': written,
+                            'written_work_highest': ww_max * 5,
+                            'performance_task_1': pt_items[0],
+                            'performance_task_2': pt_items[1],
+                            'performance_task_3': pt_items[2],
+                            'performance_task_1_highest': pt_max,
+                            'performance_task_2_highest': pt_max,
+                            'performance_task_3_highest': pt_max,
+                            'performance_task': performance,
+                            'performance_task_highest': pt_max * 3,
+                            'assessment_1': as_items[0],
+                            'assessment_2': as_items[1],
+                            'assessment_3': as_items[2],
+                            'assessment_1_highest': as_max,
+                            'assessment_2_highest': as_max,
+                            'assessment_3_highest': as_max,
+                            'assessment': assessment,
+                            'assessment_highest': as_max * 3,
                             'quarter_grade': quarter_grade,
                             'final_grade': quarter_grade,
-                            'remarks': 'Passed' if quarter_grade >= 75 else 'Failed',
+                            'remarks': 'Passed' if quarter_grade >= 75 else ('Incomplete' if quarter_grade >= 60 else 'Failed'),
                             'status': 'validated',
                             'encoded_by': random.choice(teachers),
                             'updated_by': random.choice(teachers),
                         }
                     )
+
+    @staticmethod
+    def _random_components(count, min_max, max_max):
+        """Generate `count` whole-number component scores with a shared maximum.
+
+        Returns (scores, per_item_highest). Raw item scores are integers only
+        (no decimals) — each score is a random whole number between 60% and
+        100% of the per-item maximum. Weights stay at the model defaults
+        (WW 20 / PT 50 / QA 30) for seeded rows.
+        """
+        per_item_highest = random.randint(min_max, max_max)
+        low = int(per_item_highest * 0.6)
+        scores = [random.randint(low, per_item_highest) for _ in range(count)]
+        return scores, per_item_highest
 
     def _get_subjects_for_level(self, level):
         """Helper to fetch subjects for a grade level."""
@@ -514,3 +637,33 @@ class Command(BaseCommand):
                     grade_level=grade_level,
                     defaults={'generated_by': admin_user}
                 )
+
+    def _create_audit_logs(self, users):
+        """Seed a small sample of audit trail entries for realistic history."""
+        admin = users['admin']
+        registrar = users['registrar']
+        teacher = users['teachers'][0] if users['teachers'] else admin
+        student = Student.objects.first()
+
+        samples = [
+            (admin, 'create', 'SchoolYear', 'Seeded school year 2025-2026'),
+            (admin, 'create', 'Subject', 'Seeded Grade 7 subjects'),
+            (teacher, 'grade_encode', 'Grade', 'Encoded Quarter 1 grades for Grade 7-A Mathematics'),
+            (teacher, 'grade_submit', 'GradeSubmission', 'Submitted Quarter 1 grades for validation'),
+            (registrar, 'grade_validate', 'GradeSubmission', 'Validated Quarter 1 Mathematics submission'),
+            (registrar, 'grade_return', 'GradeSubmission', 'Returned submission: missing performance task scores'),
+            (registrar, 'form137_generate', 'Form137Record', 'Generated Form 137 record'),
+            (admin, 'login', 'User', 'Admin logged in'),
+        ]
+
+        for user, action, model_name, description in samples:
+            AuditLog.objects.get_or_create(
+                user=user,
+                action=action,
+                model_name=model_name,
+                description=description,
+                defaults={
+                    'object_id': str(student.id) if student and model_name in ('Grade', 'Form137Record') else '',
+                    'ip_address': '127.0.0.1',
+                }
+            )

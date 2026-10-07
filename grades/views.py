@@ -5,6 +5,7 @@ from django.core.paginator import Paginator
 from django.views.decorators.cache import never_cache
 from django.db.models import Q, Avg, Count, Subquery, OuterRef, Case, When, Value, IntegerField, DecimalField
 from django.utils import timezone
+from decimal import Decimal, InvalidOperation
 from .models import (
     Grade, GradeSubmission, GradeValidation, weighted_quarter_grade,
     WW_WEIGHT, PT_WEIGHT, AS_WEIGHT,
@@ -132,6 +133,31 @@ def grade_list(request):
 
 
 IMMUTABLE_GRADE_STATUSES = ('validated', 'locked')
+
+
+def _parse_item_scores(raw_list):
+    """Parse raw item-score inputs into whole numbers.
+
+    Individual student item scores (Written Work 1-5, Performance Task 1-3,
+    Quarterly Assessment 1-3) must be integers. Returns ``(values, error)``:
+    blank entries become ``0``; any non-numeric or decimal entry returns an
+    error string so the caller can reject the row. Component totals and the
+    weighted quarter grade may still carry decimals.
+    """
+    values = []
+    for raw in raw_list:
+        text = str(raw).strip()
+        if not text:
+            values.append(0)
+            continue
+        try:
+            number = Decimal(text)
+        except (TypeError, ValueError, InvalidOperation):
+            return None, 'Item scores must be valid whole numbers.'
+        if number != number.to_integral_value():
+            return None, 'Item scores must be whole numbers (no decimals).'
+        values.append(int(number))
+    return values, None
 
 
 def _parse_weights(post_data, prefix=''):
@@ -560,11 +586,15 @@ def grade_save(request, assignment_pk):
             continue
 
         try:
-            ww_vals = [float(v) if v.strip() else 0 for v in ww_items]
-            pt_vals = [float(v) if v.strip() else 0 for v in pt_items]
-            as_vals = [float(v) if v.strip() else 0 for v in as_items]
+            ww_vals, ww_err = _parse_item_scores(ww_items)
+            pt_vals, pt_err = _parse_item_scores(pt_items)
+            as_vals, as_err = _parse_item_scores(as_items)
         except (ValueError, TypeError):
             messages.error(request, f'Invalid grade values for {student.full_name}.')
+            continue
+        item_error = ww_err or pt_err or as_err
+        if item_error:
+            messages.error(request, f'{student.full_name}: {item_error}')
             continue
 
         # Class-wide maxima (configured once) apply to every learner.
@@ -1349,11 +1379,15 @@ def grade_save_all(request):
                 continue
             
             try:
-                ww_vals = [float(v) if v.strip() else 0 for v in ww_items]
-                pt_vals = [float(v) if v.strip() else 0 for v in pt_items]
-                as_vals = [float(v) if v.strip() else 0 for v in as_items]
+                ww_vals, ww_err = _parse_item_scores(ww_items)
+                pt_vals, pt_err = _parse_item_scores(pt_items)
+                as_vals, as_err = _parse_item_scores(as_items)
             except (ValueError, TypeError):
                 messages.error(request, f'Invalid grade values for {student.full_name} in {assignment.subject}.')
+                continue
+            item_error = ww_err or pt_err or as_err
+            if item_error:
+                messages.error(request, f'{student.full_name} ({assignment.subject}): {item_error}')
                 continue
             
             written = sum(ww_vals)
