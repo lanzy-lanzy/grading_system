@@ -11,7 +11,7 @@ Web-Based School Management System with Automated Grade Management and Form 137 
 - **Backend:** Django 5.1+
 - **Frontend:** Django Templates + HTMX + Alpine.js
 - **Styling:** Tailwind CSS 4 (compiled locally)
-- **Database:** SQLite (development) / PostgreSQL (production)
+- **Database:** SQLite (development) / MySQL–MariaDB via XAMPP (optional local) / PostgreSQL (production)
 - **Offline-first:** No CDN dependencies
 
 ---
@@ -117,6 +117,71 @@ uv run python manage.py runserver
 ```
 
 Visit: http://127.0.0.1:8000
+
+---
+
+## Optional: Local MySQL (XAMPP / MariaDB)
+
+SQLite is the default. To run against a XAMPP MySQL server instead, leave
+`DEBUG=True` and follow these four steps.
+
+### 1. Install the driver
+
+`mysqlclient` lives in the `dev` dependency group — it only ships Windows
+wheels, so it is deliberately kept out of `requirements.txt` (production runs
+on Postgres and would have to compile it from source):
+
+```bash
+uv sync    # installs mysqlclient on Windows; skip it on Linux/macOS
+```
+
+### 2. Create the database
+
+Open phpMyAdmin (XAMPP Control Panel → **Admin** next to MySQL), go to the
+**SQL** tab and run:
+
+```sql
+CREATE DATABASE smis_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
+
+### 3. Point the project at it
+
+Copy these lines into `.env` (see `.env.example`):
+
+```ini
+DB_ENGINE=mysql
+DB_NAME=smis_db
+DB_USER=root
+DB_PASSWORD=
+DB_HOST=127.0.0.1
+DB_PORT=3306
+```
+
+### 4. Migrate and run
+
+```bash
+uv run python manage.py migrate
+uv run python manage.py seed_data          # optional demo data
+uv run python manage.py runserver
+```
+
+Confirm the app is really talking to MySQL:
+
+```bash
+uv run python manage.py check --database default
+```
+
+**Notes**
+
+- XAMPP ships **MariaDB**, not Oracle MySQL. Django 5.1 supports MariaDB 10.4+,
+  so current XAMPP builds work with the same `django.db.backends.mysql` engine.
+- `DB_ENGINE` is the only switch: unset (or `sqlite`) restores the SQLite file,
+  and production's `DATABASE_URL` / `POSTGRES_*` handling is unchanged.
+- Tables are created per engine — data does **not** move automatically between
+  SQLite and MySQL. Use `manage.py dumpdata > fixture.json` in one engine and
+  `manage.py loaddata fixture.json` in the other, or just re-run `seed_data`.
+- To revert, delete the `DB_ENGINE=mysql` line from `.env`; `db.sqlite3` still
+  holds your previous data.
 
 ---
 

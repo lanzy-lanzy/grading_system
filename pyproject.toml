@@ -24,4 +24,13 @@ build-backend = "hatchling.build"
 packages = ["config", "accounts", "students", "academics", "grades", "reports", "form137", "dashboard", "templates"]
 
 [dependency-groups]
-dev = ["black", "ruff", "hypothesis==6.135.26", "hypothesis[django]==6.135.26"]
+dev = [
+    "black",
+    "ruff",
+    "hypothesis==6.135.26",
+    "hypothesis[django]==6.135.26",
+    # MySQL driver for local dev against XAMPP (DB_ENGINE=mysql).
+    # Windows-only wheels, and never installed in production (Postgres),
+    # so it is kept out of requirements.txt and gated on sys_platform.
+    "mysqlclient>=2.2; sys_platform == 'win32'",
+]

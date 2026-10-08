@@ -81,10 +81,32 @@ DATABASES = {
     }
 }
 
+_DATABASE_URL = config('DATABASE_URL', default='').strip()
+_DB_ENGINE = config('DB_ENGINE', default='').strip().lower()
+
+# Local dev against XAMPP's MySQL/MariaDB: set DB_ENGINE=mysql in .env.
+# STRICT_TRANS_TABLES makes out-of-range grade values raise instead of being
+# silently truncated, and utf8mb4 matches what the models expect.
+# Production never sets DB_ENGINE, so the Postgres paths below still win there.
+if _DB_ENGINE == 'mysql':
+    DATABASES['default'] = {
+        'ENGINE': 'django.db.backends.mysql',
+        'NAME': config('DB_NAME', default='smis_db'),
+        'USER': config('DB_USER', default='root'),
+        'PASSWORD': config('DB_PASSWORD', default=''),
+        'HOST': config('DB_HOST', default='127.0.0.1'),
+        'PORT': config('DB_PORT', default='3306'),
+        'CONN_MAX_AGE': 600,
+        'OPTIONS': {
+            'charset': 'utf8mb4',
+            # Session sql_mode replaces the server default, so list the usual
+            # XAMPP/MariaDB modes plus STRICT_TRANS_TABLES rather than dropping them.
+            'init_command': "SET sql_mode='STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION'",
+        },
+    }
 # Production: Supabase Postgres via DATABASE_URL (pooled, port 6543) or
 # individual POSTGRES_* vars. Falls back to SQLite for local dev.
-_DATABASE_URL = config('DATABASE_URL', default='').strip()
-if _DATABASE_URL and _HAS_DJ_DB_URL:
+elif _DATABASE_URL and _HAS_DJ_DB_URL:
     DATABASES['default'] = dj_database_url.parse(
         _DATABASE_URL,
         conn_max_age=600,
