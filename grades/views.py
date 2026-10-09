@@ -21,6 +21,25 @@ from accounts.decorators import (
 )
 
 
+def _assignment_roster(assignment):
+    """Active students shown in the encoding grid for a subject assignment.
+
+    Primary source is the assignment's own section. Students enrolled there are
+    always included, which is what makes a newly enrolled learner appear at once.
+    A narrow fallback adds advisees the Registrar assigned to this teacher but
+    could not place in a section yet (legacy rows with a null section) at the
+    matching grade level, so they are never stranded from grade entry.
+    """
+    return Student.objects.filter(
+        Q(section=assignment.section)
+        | Q(
+            adviser=assignment.teacher,
+            section__isnull=True,
+            grade_level=assignment.section.grade_level,
+        )
+    ).filter(status='active').distinct()
+
+
 @role_required('admin', 'registrar', 'teacher')
 def grade_list(request):
     from django.db.models import Count, Q
@@ -44,15 +63,15 @@ def grade_list(request):
     if request.user.is_teacher:
         assignments = TeacherAssignment.objects.filter(
             teacher=teacher, school_year=current_sy
-        ).select_related('subject', 'section', 'section__grade_level').annotate(
-            student_count=Count('section__student')
-        ).order_by('section__grade_level__level', 'section__name', 'subject__name')
+        ).select_related('subject', 'section', 'section__grade_level').order_by(
+            'section__grade_level__level', 'section__name', 'subject__name'
+        )
     else:
         assignments = TeacherAssignment.objects.filter(
             school_year=current_sy
-        ).select_related('teacher', 'subject', 'section', 'section__grade_level').annotate(
-            student_count=Count('section__student')
-        ).order_by('section__grade_level__level', 'section__name', 'subject__name')
+        ).select_related('teacher', 'subject', 'section', 'section__grade_level').order_by(
+            'section__grade_level__level', 'section__name', 'subject__name'
+        )
 
     if query:
         assignments = assignments.filter(
@@ -94,9 +113,43 @@ def grade_list(request):
         status__in=['validated', 'locked'], quarter_grade__lt=75, school_year=current_sy, grading_period=selected_period
     ).values('student').distinct().count() if current_sy and selected_period else 0
     
+    # A teacher can only encode grades for classes they hold a subject
+    # assignment in. If the Registrar assigned them students as adviser of a
+    # section that has no such assignment, say so instead of leaving the
+    # students silently absent from the encoding grid. Only on full page loads:
+    # HTMX partial responses never render the message block, so queued warnings
+    # would pile up with each keystroke in the search filter.
+    if request.user.is_teacher and current_sy and not request.headers.get('HX-Request'):
+        covered_section_ids = set(
+            TeacherAssignment.objects.filter(
+                teacher=teacher, school_year=current_sy
+            ).values_list('section_id', flat=True)
+        )
+        gap_sections = [
+            sec for sec in Section.objects.filter(
+                adviser=teacher, school_year=current_sy
+            ).select_related('grade_level')
+            if sec.pk not in covered_section_ids
+        ]
+        for sec in gap_sections:
+            student_count = Student.objects.filter(section=sec, status='active').count()
+            if student_count:
+                messages.warning(
+                    request,
+                    f'{sec} has {student_count} active student(s) but you have no '
+                    'subject assignment for it, so they cannot be encoded yet. '
+                    'Ask an admin to add your subject assignment under Academics.'
+                )
+
     paginator = Paginator(assignments, 15)
     page = request.GET.get('page', 1)
     assignments_page = paginator.get_page(page)
+
+    # Roster counts come from the same query the encoding grid uses, so the
+    # badge on each card matches what the teacher sees on opening it. Computed
+    # for the current page only to avoid one query per assignment site-wide.
+    for assignment in assignments_page.object_list:
+        assignment.student_count = _assignment_roster(assignment).count()
 
     if request.headers.get('HX-Request'):
         template = 'grades/partials/assignment_table.html' if view_type == 'table' else 'grades/partials/assignment_list.html'
@@ -433,11 +486,7 @@ def grade_encode(request, assignment_pk):
         messages.error(request, 'Grade submissions are not open for this grading period.')
         return redirect('grades:grade_list')
     
-    students = Student.objects.filter(
-        grade_level=assignment.section.grade_level,
-        section=assignment.section,
-        status='active'
-    )
+    students = _assignment_roster(assignment)
     
     existing_grades = {}
     for grade in Grade.objects.filter(
@@ -553,11 +602,7 @@ def grade_save(request, assignment_pk):
         messages.error(request, max_error)
         return redirect(f'{reverse("grades:grade_encode", args=[assignment.pk])}?period={grading_period.pk}')
 
-    students = Student.objects.filter(
-        grade_level=assignment.section.grade_level,
-        section=assignment.section,
-        status='active'
-    )
+    students = _assignment_roster(assignment)
 
     student_ids_with_data = []
     locked_skipped = 0
@@ -632,7 +677,7 @@ def grade_save(request, assignment_pk):
             grading_period=grading_period,
             school_year=assignment.school_year,
             defaults={
-                'section': assignment.section,
+                'section': student.section or assignment.section,
                 'written_work_1': ww_vals[0], 'written_work_2': ww_vals[1], 'written_work_3': ww_vals[2],
                 'written_work_4': ww_vals[3], 'written_work_5': ww_vals[4],
                 'written_work_1_highest': maxes['ww_items'][0], 'written_work_2_highest': maxes['ww_items'][1],
@@ -1095,11 +1140,7 @@ def grade_encode_select(request):
     if selected_assignment:
         context.update(_sequence_context(selected_assignment, all_periods, grading_period))
 
-        students = Student.objects.filter(
-            grade_level=selected_assignment.section.grade_level,
-            section=selected_assignment.section,
-            status='active'
-        ).order_by('last_name', 'first_name')
+        students = _assignment_roster(selected_assignment).order_by('last_name', 'first_name')
         
         existing_grades = {
             g.student_id: g for g in Grade.objects.filter(
@@ -1193,11 +1234,7 @@ def grade_encode_all(request):
             elif access.get(p.pk) == 'current':
                 period_has_current[p.pk] = True
 
-        students = Student.objects.filter(
-            grade_level=assignment.section.grade_level,
-            section=assignment.section,
-            status='active'
-        ).order_by('last_name', 'first_name')
+        students = _assignment_roster(assignment).order_by('last_name', 'first_name')
         
         existing_grades = {
             g.student_id: g for g in Grade.objects.filter(
@@ -1327,11 +1364,7 @@ def grade_save_all(request):
             under_review_skipped += 1
             continue
 
-        students = Student.objects.filter(
-            grade_level=assignment.section.grade_level,
-            section=assignment.section,
-            status='active'
-        )
+        students = _assignment_roster(assignment)
         
         # Per-class weight config (each assignment's table posts its own weights).
         weights, weight_error = _parse_weights(request.POST, prefix=f'assignment_{assignment.pk}_')
@@ -1420,7 +1453,7 @@ def grade_save_all(request):
                 grading_period=grading_period,
                 school_year=assignment.school_year,
                 defaults={
-                    'section': assignment.section,
+                    'section': student.section or assignment.section,
                     'written_work_1': ww_vals[0], 'written_work_2': ww_vals[1], 'written_work_3': ww_vals[2],
                     'written_work_4': ww_vals[3], 'written_work_5': ww_vals[4],
                     'written_work_1_highest': maxes['ww_items'][0], 'written_work_2_highest': maxes['ww_items'][1],

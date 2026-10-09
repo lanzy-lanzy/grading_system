@@ -81,8 +81,9 @@
                     {{ form.grade_level }}
                 </div>
                 <div>
-                    <label class="block text-sm font-medium mb-1">Section</label>
+                    <label class="block text-sm font-medium mb-1">Section <span class="text-red-500">*</span></label>
                     {{ form.section }}
+                    {% if form.section.errors %}<p class="text-red-500 text-xs mt-1">{{ form.section.errors.0 }}</p>{% endif %}
                 </div>
                 <div>
                     <label class="block text-sm font-medium mb-1">Adviser (Teacher) <span class="text-red-500">*</span></label>
