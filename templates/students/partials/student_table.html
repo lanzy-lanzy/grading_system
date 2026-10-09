@@ -5,6 +5,9 @@
             <th class="px-4 py-3 text-left font-medium">Sex</th>
             <th class="px-4 py-3 text-left font-medium">Grade Level</th>
             <th class="px-4 py-3 text-left font-medium">Section</th>
+            {% if user.is_admin or user.is_registrar %}
+            <th class="px-4 py-3 text-left font-medium">Adviser</th>
+            {% endif %}
             <th class="px-4 py-3 text-left font-medium">Status</th>
             {% if user.is_admin or user.is_registrar %}
             <th class="px-4 py-3 text-right font-medium">Actions</th>
@@ -32,6 +35,9 @@
             <td class="px-4 py-3">
                 <span class="px-2.5 py-1 text-xs rounded-lg bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 font-medium">{{ student.section }}</span>
             </td>
+            {% if user.is_admin or user.is_registrar %}
+            <td class="px-4 py-3 text-gray-600 dark:text-gray-300">{{ student.adviser.get_full_name|default:"—" }}</td>
+            {% endif %}
             <td class="px-4 py-3">
                 {% if student.status == 'active' %}
                 <span class="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-lg bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 font-medium">
@@ -73,7 +79,7 @@
         </tr>
         {% empty %}
         <tr>
-            <td colspan="{% if user.is_admin or user.is_registrar %}6{% else %}5{% endif %}" class="px-4 py-12 text-center text-gray-500">
+            <td colspan="{% if user.is_admin or user.is_registrar %}7{% else %}5{% endif %}" class="px-4 py-12 text-center text-gray-500">
                 <div class="flex flex-col items-center gap-2">
                     <svg class="w-12 h-12 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
                     <p>No students found</p>

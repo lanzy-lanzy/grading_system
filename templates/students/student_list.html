@@ -99,6 +99,15 @@
                     <option value="{{ sec.id }}" {% if section_filter == sec.id|stringformat:"d" %}selected{% endif %}>{{ sec.name }}</option>
                     {% endfor %}
                 </select>
+                {% if user.is_admin or user.is_registrar %}
+                <select name="adviser" class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white text-sm"
+                        hx-get="{% url 'students:student_list' %}" :hx-target="view === 'grid' ? '#student-grid' : (view === 'sections' ? '#student-sections' : '#student-table')" hx-trigger="change" hx-include="#student-filters">
+                    <option value="">All Advisers</option>
+                    {% for adv in advisers %}
+                    <option value="{{ adv.id }}" {% if adviser_filter == adv.id|stringformat:"d" %}selected{% endif %}>{{ adv.get_full_name }}</option>
+                    {% endfor %}
+                </select>
+                {% endif %}
                 <select name="status" class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white text-sm"
                         hx-get="{% url 'students:student_list' %}" :hx-target="view === 'grid' ? '#student-grid' : (view === 'sections' ? '#student-sections' : '#student-table')" hx-trigger="change" hx-include="#student-filters">
                     <option value="">All Status</option>

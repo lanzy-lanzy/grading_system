@@ -34,6 +34,16 @@ class Student(models.Model):
     grade_level = models.ForeignKey('academics.GradeLevel', on_delete=models.SET_NULL, null=True)
     section = models.ForeignKey('academics.Section', on_delete=models.SET_NULL, null=True, blank=True)
     school_year = models.ForeignKey('academics.SchoolYear', on_delete=models.SET_NULL, null=True)
+    adviser = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        limit_choices_to={'role': 'teacher', 'is_active': True},
+        related_name='advised_students',
+        verbose_name='Adviser (Teacher)',
+        help_text='Teacher assigned to this student. Required when enrolling a new student.',
+    )
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
     
     user_account = models.OneToOneField(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='student_profile')

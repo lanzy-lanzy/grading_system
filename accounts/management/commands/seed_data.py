@@ -326,6 +326,9 @@ class Command(BaseCommand):
         statuses = ['active'] * 8 + ['inactive'] + ['transferred'] + ['dropped']
         sexes = ['M', 'F']
 
+        from accounts.models import User
+        teachers = list(User.objects.filter(role='teacher', is_active=True))
+
         students = []
         student_idx = 1
 
@@ -359,6 +362,7 @@ class Command(BaseCommand):
                             'grade_level': grade_levels[level],
                             'section': section,
                             'school_year': school_years['2025-2026'],
+                            'adviser': section.adviser or (random.choice(teachers) if teachers else None),
                             'status': status,
                         }
                     )

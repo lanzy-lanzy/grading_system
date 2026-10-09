@@ -18,24 +18,32 @@ from accounts.decorators import (
 
 
 def _teacher_assigned_sections(user):
-    """Return section IDs for sections the teacher is assigned to in the current school year."""
-    from academics.models import TeacherAssignment, SchoolYear
+    """Return section IDs for sections the teacher is assigned to in the current school year.
+
+    Includes sections where the teacher is the assigned adviser (e.g. via student
+    enrollment) as well as sections from subject TeacherAssignments.
+    """
+    from academics.models import TeacherAssignment, SchoolYear, Section
     current_sy = SchoolYear.objects.filter(is_current=True).first()
-    if current_sy:
-        return list(TeacherAssignment.objects.filter(
-            teacher=user,
-            school_year=current_sy
-        ).values_list('section_id', flat=True).distinct())
-    return []
+    if not current_sy:
+        return []
+    assignment_ids = list(TeacherAssignment.objects.filter(
+        teacher=user,
+        school_year=current_sy
+    ).values_list('section_id', flat=True).distinct())
+    adviser_section_ids = list(Section.objects.filter(
+        adviser=user,
+        school_year=current_sy
+    ).values_list('id', flat=True))
+    return list(set(assignment_ids) | set(adviser_section_ids))
 
 
 def _filter_students_by_role(queryset, user):
     """Scope student queryset based on user role."""
     if user.is_teacher:
         assigned_section_ids = _teacher_assigned_sections(user)
-        if assigned_section_ids:
-            return queryset.filter(section_id__in=assigned_section_ids)
-        return queryset.none()
+        visible = queryset.filter(section_id__in=assigned_section_ids) if assigned_section_ids else queryset.none()
+        return visible | queryset.filter(adviser=user)
     return queryset
 
 
@@ -44,11 +52,12 @@ def student_list(request):
     query = request.GET.get("q", "")
     grade_filter = request.GET.get("grade", "")
     section_filter = request.GET.get("section", "")
+    adviser_filter = request.GET.get("adviser", "")
     status_filter = request.GET.get("status", "")
     view_type = request.GET.get("view", "sections")
 
     students = Student.objects.select_related(
-        "grade_level", "section", "school_year"
+        "grade_level", "section", "school_year", "adviser"
     ).all()
     students = _filter_students_by_role(students, request.user)
 
@@ -66,6 +75,9 @@ def student_list(request):
     if section_filter:
         students = students.filter(section_id=section_filter)
 
+    if adviser_filter:
+        students = students.filter(adviser_id=adviser_filter)
+
     if status_filter:
         students = students.filter(status=status_filter)
 
@@ -81,9 +93,11 @@ def student_list(request):
     students_by_grade = all_students.values('grade_level__name', 'grade_level__id').annotate(count=Count('id')).order_by('grade_level__level')
 
     from academics.models import GradeLevel, Section
+    from accounts.models import User
 
     grade_levels = GradeLevel.objects.all()
     sections = Section.objects.all()
+    advisers = User.objects.filter(role='teacher', is_active=True).order_by('last_name', 'first_name')
 
     if request.headers.get("HX-Request"):
         if view_type == 'grid':
@@ -110,9 +124,11 @@ def student_list(request):
             "query": query,
             "grade_filter": grade_filter,
             "section_filter": section_filter,
+            "adviser_filter": adviser_filter,
             "status_filter": status_filter,
             "grade_levels": grade_levels,
             "sections": sections,
+            "advisers": advisers,
             "status_choices": Student.STATUS_CHOICES,
             "total_students": total_students,
             "active_students": active_students,
@@ -247,10 +263,10 @@ def student_delete(request, pk):
 def student_detail(request, pk):
     student = get_object_or_404(Student, pk=pk)
     
-    # For teachers, check if they are assigned to the student's section
+    # For teachers, check if they are assigned to the student's section or are the adviser
     if request.user.is_teacher:
         assigned_section_ids = _teacher_assigned_sections(request.user)
-        if student.section_id not in assigned_section_ids:
+        if student.section_id not in assigned_section_ids and student.adviser_id != request.user.pk:
             messages.error(request, "Access denied. You are not assigned to this section.")
             return redirect("students:student_list")
     
@@ -322,9 +338,9 @@ def student_export(request):
     response['Content-Disposition'] = 'attachment; filename="students_export.csv"'
     
     writer = csv.writer(response)
-    writer.writerow(['LRN', 'First Name', 'Middle Name', 'Last Name', 'Suffix', 'Sex', 'Birthdate', 'Birthplace', 'Address', 'Grade Level', 'Section', 'Status', 'Parent Name', 'Parent Phone'])
+    writer.writerow(['LRN', 'First Name', 'Middle Name', 'Last Name', 'Suffix', 'Sex', 'Birthdate', 'Birthplace', 'Address', 'Grade Level', 'Section', 'Adviser', 'Status', 'Parent Name', 'Parent Phone'])
     
-    students = Student.objects.select_related('grade_level', 'section').all()
+    students = Student.objects.select_related('grade_level', 'section', 'adviser').all()
     
     for student in students:
         writer.writerow([
@@ -339,6 +355,7 @@ def student_export(request):
             student.address,
             student.grade_level,
             student.section,
+            student.adviser.get_full_name() if student.adviser else '',
             student.get_status_display(),
             student.parent_name,
             student.parent_phone,

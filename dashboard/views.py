@@ -149,6 +149,18 @@ def index(request):
         },
     ]
 
+    # Students directly assigned to the signed-in teacher (adviser assignment)
+    advised_students = []
+    advised_students_count = 0
+    if request.user.is_teacher:
+        advised_qs = Student.objects.select_related('grade_level', 'section').filter(
+            adviser=request.user
+        )
+        if current_sy:
+            advised_qs = advised_qs.filter(school_year=current_sy)
+        advised_students = advised_qs.filter(status='active')[:8]
+        advised_students_count = advised_qs.filter(status='active').count()
+
     return render(request, 'dashboard/index.html', {
         'total_students': total_students,
         'total_teachers': total_teachers,
@@ -166,6 +178,8 @@ def index(request):
         'at_risk_students': at_risk_students,
         'recent_activities': recent_activities,
         'announcements': announcements,
+        'advised_students': advised_students,
+        'advised_students_count': advised_students_count,
         'current_sy': current_sy,
         'today': timezone.now(),
     })

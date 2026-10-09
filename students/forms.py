@@ -1,14 +1,23 @@
 from django import forms
+from accounts.models import User
 from .models import Student
 
 
 class StudentForm(forms.ModelForm):
+    adviser = forms.ModelChoiceField(
+        queryset=User.objects.filter(role='teacher', is_active=True).order_by('last_name', 'first_name'),
+        required=True,
+        empty_label='-- Select Adviser (Teacher) --',
+        error_messages={'required': 'An adviser (teacher) must be assigned to the student.'},
+        help_text='The selected teacher will see this student on their roster immediately.',
+    )
+
     class Meta:
         model = Student
         fields = ('lrn', 'first_name', 'middle_name', 'last_name', 'suffix', 'sex', 
                   'birthdate', 'birthplace', 'address', 'phone', 'email',
                   'parent_name', 'parent_phone', 'parent_address',
-                  'grade_level', 'section', 'school_year', 'status')
+                  'grade_level', 'section', 'school_year', 'adviser', 'status')
         widgets = {
             'birthdate': forms.DateInput(attrs={'type': 'date'}),
         }
